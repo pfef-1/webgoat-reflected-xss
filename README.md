@@ -1,17 +1,21 @@
-WebGoat Reflected XSS — Shopping Cart
+# WebGoat Reflected XSS — Shopping Cart
+
 This project was a Reflected XSS assessment using OWASP WebGoat's shopping cart module. I used Burp Suite to intercept the requests, test the different input fields, and find which one was reflecting user input without proper encoding.
 
 After finding the vulnerable field, I tested JavaScript execution and then created a payload that modified the shopping cart directly in the browser by changing the quantities and prices.
 
 This was completed in an isolated lab environment using Kali Linux and OWASP WebGoat. No production systems were involved.
 
-Objective
+## Objective
+
 The goal was to determine whether any of the shopping cart fields were vulnerable to reflected XSS.
 
 Instead of only showing a basic `alert()` as proof, I wanted to show the actual impact by using JavaScript to modify the shopping cart in the browser.
 
-Methodology
-1. Capture the request
+## Methodology
+
+### 1. Capture the request
+
 I first used Burp Suite to capture the normal shopping cart requests so I could see exactly what parameters were being sent.
 
 The request contained:
@@ -27,7 +31,8 @@ There were seven parameters:
 * `field1` — access code
 * `SUBMIT` — purchase action
 
-2. Test each field
+### 2. Test each field
+
 Instead of guessing which parameter was vulnerable, I tested each field individually with:
 
 ```html
@@ -44,7 +49,8 @@ The results were:
 
 The WebGoat success message appeared when testing `field1`, confirming that JavaScript was being executed.
 
-Key Finding
+## Key Finding
+
 The vulnerable parameter was `field1`, the access code field.
 
 The application reflected the value directly into the response without properly encoding it. Because characters such as `<`, `>` and `"` were not encoded, the browser interpreted the injected content as actual HTML and JavaScript.
@@ -59,7 +65,8 @@ This successfully executed and displayed the session cookie in the lab.
 
 This confirmed that the injected JavaScript was running in the same context as the WebGoat application and could interact with the page's DOM and JavaScript-accessible data.
 
-Exploitation
+## Exploitation
+
 After confirming the XSS, I wanted to demonstrate more than just an `alert()`.
 
 I created a JavaScript payload that changed the shopping cart directly in the browser. The script:
@@ -103,12 +110,14 @@ For the price cells, I checked the text being displayed and looked for values ma
 
 I also used `window.onload` so the script would wait until the page finished loading before trying to modify the shopping cart.
 
-Result
+## Result
+
 The quantities were changed to `999`, the displayed prices were changed to `$0.00`, and the displayed total was reduced to `$0.00`.
 
 The changes were made entirely in the browser. This demonstrates that the injected JavaScript had access to and could modify the page's DOM.
 
-Why This Is Reflected XSS
+## Why This Is Reflected XSS
+
 Reflected XSS happens when an application takes user input and puts it back into the response without properly encoding it.
 
 In this case:
@@ -121,7 +130,8 @@ In this case:
 
 It is called reflected XSS because the malicious input isn't permanently stored in the application. It is reflected back as part of the response to the request.
 
-Impact
+## Impact
+
 The lab showed that an attacker-controlled script could run inside the application and modify the page.
 
 In a real application, the impact could include:
@@ -134,26 +144,31 @@ In a real application, the impact could include:
 
 The cart manipulation in this lab was only a client-side demonstration. Changing what the browser displays does not automatically change what the server accepts. A properly designed application should always validate important values server-side.
 
-Remediation
-1. Output encoding
+## Remediation
+
+### 1. Output encoding
+
 The main fix is to properly encode user input before putting it into the response.
 
 For example, HTML special characters such as `<`, `>` and `"` should be encoded so the browser treats them as data instead of HTML.
 
-2. Content Security Policy
+### 2. Content Security Policy
+
 A strong Content Security Policy (CSP) can provide another layer of protection by restricting where JavaScript can run and blocking things like inline scripts.
 
-3. HttpOnly cookies
+### 3. HttpOnly cookies
+
 Session cookies should be marked as HttpOnly so JavaScript cannot access them through `document.cookie`.
 
 This would reduce the impact of XSS if another XSS vulnerability was found.
 
-4. Server-side input validation
+### 4. Server-side input validation
+
 Fields that have a specific format should also be validated on the server.
 
 For example, the access code should only accept the expected number and format of characters. This doesn't replace output encoding, but it adds another layer of protection.
 
-Skills & Tools
+## Skills & Tools
 
 * Burp Suite — intercepted requests and tested parameters
 * Kali Linux — used as the attacker environment
@@ -163,11 +178,14 @@ Skills & Tools
 * Browser DevTools — used to confirm JavaScript execution and DOM changes
 * XSS analysis — identified the vulnerable parameter, confirmed execution, and explained the remediation
 
-What I Took From This Project
+## What I Took From This Project
+
 The main thing I took from this lab was understanding the difference between simply finding XSS and actually showing its impact.
 
 Using Burp Suite, I was able to test each parameter instead of just guessing which one was vulnerable. Once I found that `field1` was reflecting input without encoding, I could confirm JavaScript execution and then use the vulnerability to actually manipulate the page.
 
 It also showed why output encoding is so important. The application wasn't necessarily doing anything complicated with the input — it was simply putting it back into the page without making sure the browser treated it as data.
 
-Performed for CCCS-455-784 (Intrusion Testing & Security Assessment), McGill University School of Continuing Studies, Summer 2026, as a group assignment. Completed in an isolated WebGoat lab environment.
+---
+
+*Performed for CCCS-455-784 (Intrusion Testing & Security Assessment), McGill University School of Continuing Studies, Summer 2026, as a group assignment. Completed in an isolated WebGoat lab environment.*
