@@ -1,211 +1,173 @@
-# WebGoat Reflected XSS — Shopping Cart
+WebGoat Reflected XSS — Shopping Cart
+This project was a Reflected XSS assessment using OWASP WebGoat's shopping cart module. I used Burp Suite to intercept the requests, test the different input fields, and find which one was reflecting user input without proper encoding.
 
-Reflected XSS assessment against OWASP WebGoat's shopping cart module, performed as part
-of a graduate intrusion testing course (CCCS-455-784, McGill University School of
-Continuing Studies). Traffic was intercepted and manipulated with Burp Suite to find and
-exploit an unencoded reflection point, then a JavaScript payload was built to
-manipulate the DOM directly — resetting quantities and zeroing out prices client-side,
-without ever touching the server.
+After finding the vulnerable field, I tested JavaScript execution and then created a payload that modified the shopping cart directly in the browser by changing the quantities and prices.
 
-This project demonstrates a full attack lifecycle: systematic vulnerable-field
-discovery, payload iteration, exploitation, and a defender's-eye view of what would
-actually stop it in production.
+This was completed in an isolated lab environment using Kali Linux and OWASP WebGoat. No production systems were involved.
 
-> Performed in an isolated lab environment (Kali Linux attacker VM + OWASP Broken Web
-> Apps victim VM) against a deliberately vulnerable training application. Not performed
-> against any production system.
+Objective
+The goal was to determine whether any of the shopping cart fields were vulnerable to reflected XSS.
 
-## Objective
+Instead of only showing a basic `alert()` as proof, I wanted to show the actual impact by using JavaScript to modify the shopping cart in the browser.
 
-WebGoat's "Reflected XSS Attacks" lesson presents a shopping cart form with several
-input fields. The goal was to determine whether any of those fields reflect user input
-back into the page without encoding it — and if so, use that to prove real impact by
-manipulating the cart (rather than just popping an `alert()` box).
+Methodology
+1. Capture the request
+I first used Burp Suite to capture the normal shopping cart requests so I could see exactly what parameters were being sent.
 
-## Methodology
+The request contained:
 
-**1. Map the attack surface.** Traffic was captured in Burp Suite while interacting
-with the cart normally (`UpdateCart`, `Purchase`) to see the full request body without
-guessing:
-
-```
+```text
 QTY1=1&QTY2=1&QTY3=1&QTY4=1&field2=4128+3214+0002+1999&field1=111&SUBMIT=Purchase
 ```
 
-Seven parameters total: four quantity fields (`QTY1`–`QTY4`), a credit card number
-(`field2`), and a three-digit access code (`field1`).
+There were seven parameters:
 
-**2. Test each field for reflection.** Rather than guessing which field was
-exploitable, every field was tested individually with a harmless marker payload:
+* `QTY1`–`QTY4` — item quantities
+* `field2` — credit card number
+* `field1` — access code
+* `SUBMIT` — purchase action
 
-```
+2. Test each field
+Instead of guessing which parameter was vulnerable, I tested each field individually with:
+
+```html
 '><script>alert('XSS')</script>
 ```
 
-The leading `'>` is the actual test — it attempts to break out of the current HTML
-attribute/tag context. If the server encodes special characters before reflecting
-them, the browser displays the payload as inert text. If it doesn't, the browser
-parses `<script>` as real markup and executes it.
+The goal was to see if the application would treat the input as normal text or actually interpret it as HTML/JavaScript.
 
-- `QTY1`–`QTY4`: payload reflected as plain text, no execution.
-- `field2` (credit card): input got mangled by the field's own formatting/masking
-  before reflection — never rendered as executable markup.
-- `field1` (access code): payload executed. WebGoat's lesson-complete banner fired
-  immediately, confirming the `<script>` tag was parsed as real HTML, not displayed as
-  text.
+The results were:
 
-## Key Finding
+* `QTY1`–`QTY4`: reflected as text and did not execute
+* `field2`: the input was modified by the field's formatting before being reflected
+* `field1`: the payload executed successfully
 
-The **access code field (`field1`)** reflects user input directly into the HTTP
-response with no output encoding. Any HTML or JavaScript submitted in that field is
-parsed and executed by the browser exactly as if it were part of the page.
+The WebGoat success message appeared when testing `field1`, confirming that JavaScript was being executed.
 
-Confirmed unambiguously with a second, more diagnostic payload:
+Key Finding
+The vulnerable parameter was `field1`, the access code field.
+
+The application reflected the value directly into the response without properly encoding it. Because characters such as `<`, `>` and `"` were not encoded, the browser interpreted the injected content as actual HTML and JavaScript.
+
+I confirmed this with another payload:
 
 ```html
 "><svg/onload=alert(document.cookie)>
 ```
 
-This payload is deliberately more useful than a plain `alert('XSS')` for two reasons:
-`"> `attempts to break out of the current HTML context (proving the injection point),
-and `<svg onload=...>` is a tag/event combination that has no legitimate reason to
-appear in user input — so if it fires, it's unambiguous proof of unencoded reflection,
-not a false positive. It fired successfully, popping the live session cookie
-(`JSESSIONID=...`) in an alert box — proof that arbitrary JavaScript in the page's
-execution context has full access to `document.cookie`.
+This successfully executed and displayed the session cookie in the lab.
 
-## Exploitation
+This confirmed that the injected JavaScript was running in the same context as the WebGoat application and could interact with the page's DOM and JavaScript-accessible data.
 
-With confirmed script execution, the next step was to go beyond a proof-of-concept
-`alert()` and demonstrate real application impact: silently modify the shopping cart
-to set every item's quantity to 999 and every price to $0.00, entirely client-side.
+Exploitation
+After confirming the XSS, I wanted to demonstrate more than just an `alert()`.
 
-The payload works in two passes over the DOM, using
-[`document.getElementsByTagName`](https://developer.mozilla.org/en-US/docs/Web/API/Document/getElementsByTagName)
-to collect elements, then a `for` loop to inspect and modify each one:
+I created a JavaScript payload that changed the shopping cart directly in the browser. The script:
+
+1. Finds all of the quantity inputs.
+2. Changes the quantities to `999`.
+3. Finds the price and total cells.
+4. Changes the displayed prices to `$0.00`.
+
+The main part of the payload was:
 
 ```html
 "><script>window.onload=function(){
-  // Pass 1: every <input> whose name starts with "QTY" gets its value forced to 999
   var inputs = document.getElementsByTagName('input');
+
   for (var a = 0; a < inputs.length; a++) {
     if (inputs[a].name && inputs[a].name.indexOf('QTY') === 0) {
       inputs[a].value = 999;
     }
   }
 
-  // Pass 2: every <td> whose displayed text is a price ("$69.99") or a plain
-  // decimal ("69.99") gets overwritten to display $0.00
   var cells = document.getElementsByTagName('td');
+
   for (var b = 0; b < cells.length; b++) {
     var text = cells[b].innerHTML;
+
     if (text.indexOf('$') === 0) {
-      cells[b].innerHTML = '$0.00';        // Total column
+      cells[b].innerHTML = '$0.00';
     } else if (/^\d+\.\d\d$/.test(text)) {
-      cells[b].innerHTML = '0.00';         // Price column
+      cells[b].innerHTML = '0.00';
     }
   }
 }</script>
 ```
 
-Why two passes instead of one: `<input>` elements expose a `.name` attribute that
-directly identifies which field is which (`QTY1`, `QTY2`, ...), so filtering on that is
-straightforward. `<td>` elements carry no such identifying attribute — the only way to
-tell a "Price" cell from a "Total" cell from any other cell in the table is by
-inspecting what's actually displayed inside it, hence the `$` prefix check and the
-`^\d+\.\d\d$` regular expression as two separate matching rules.
+I used two separate loops because the quantity fields and table cells were easier to identify in different ways.
 
-`window.onload = function(){...}` defers execution until the full page — including the
-shopping cart table — has finished loading, so the script isn't racing against
-elements that don't exist yet at the moment the payload itself is parsed.
+For the quantity fields, I could look for names starting with `QTY`.
 
-**Result:** every quantity box read `999`, every price and total cell read `$0.00`,
-and the total charge dropped to `$0.00` — all without a single request to the server
-that WebGoat's own logic didn't already expect.
+For the price cells, I checked the text being displayed and looked for values matching the expected price format.
 
-## Technical Explanation: Why This Is Reflected XSS
+I also used `window.onload` so the script would wait until the page finished loading before trying to modify the shopping cart.
 
-Reflected XSS happens when an application takes untrusted input, and immediately
-embeds it back into the HTTP response **without encoding it**, so the browser can no
-longer tell the difference between "page content" and "code the page is supposed to
-run."
+Result
+The quantities were changed to `999`, the displayed prices were changed to `$0.00`, and the displayed total was reduced to `$0.00`.
 
-Concretely, in this case:
+The changes were made entirely in the browser. This demonstrates that the injected JavaScript had access to and could modify the page's DOM.
 
-1. The `field1` value gets echoed back into the page's HTML inside the response to the
-   `Purchase`/`UpdateCart` request.
-2. The server does this with **zero output encoding** — characters like `<`, `>`, and
-   `"` are inserted into the HTML verbatim instead of being converted to their safe
-   equivalents (`&lt;`, `&gt;`, `&quot;`).
-3. The browser has no way to know that `<script>...</script>` in the response was
-   supposed to be *data* (the value the user typed) rather than *markup* (part of the
-   page). It parses it exactly like any other tag on the page and executes it.
-4. Because this executes in the same origin as the real WebGoat page, the injected
-   script has full access to that page's DOM, cookies, and any other JavaScript-
-   accessible state — which is exactly what let it read `document.cookie` and rewrite
-   the cart table.
+Why This Is Reflected XSS
+Reflected XSS happens when an application takes user input and puts it back into the response without properly encoding it.
 
-It's called *reflected* (as opposed to *stored*) because the payload only exists for
-the duration of that one request/response — nothing is saved server-side. The
-vulnerability lives entirely in one place: the response handler that echoes `field1`
-back without encoding it.
+In this case:
 
-## Impact / Risk in a Real Environment
+1. I submitted the `field1` value to the application.
+2. The server reflected that value back into the page.
+3. Special characters such as `<` and `>` were not encoded.
+4. The browser interpreted the injected HTML as part of the page.
+5. The JavaScript executed in the context of the WebGoat application.
 
-This lab used play-money quantities and prices, but the same mechanism scales
-directly to serious impact on a production e-commerce or banking application:
+It is called reflected XSS because the malicious input isn't permanently stored in the application. It is reflected back as part of the response to the request.
 
-- **Session hijacking.** The SVG payload proved `document.cookie` is readable from
-  injected script. On a real site without `HttpOnly` cookies, that's a session token
-  an attacker can exfiltrate and use to impersonate the victim.
-- **Credential/payment theft.** The same injection technique used here to rewrite
-  `<td>` cells could just as easily inject a fake login form or fake payment field
-  overlaid on the real page — the user has no way to tell it apart from legitimate
-  UI, because it's running inside the legitimate page's origin.
-- **Price/business-logic manipulation.** Purely client-side manipulation (as
-  demonstrated here) is only dangerous if the server trusts client-submitted totals
-  without re-validating them — which is a separate, common flaw worth checking for
-  on any target that reflects this kind of vulnerability.
-- **Requires user interaction.** Reflected XSS isn't self-propagating — it needs the
-  victim to submit the malicious input themselves (e.g. via a crafted link, since a
-  reflected payload is typically delivered as part of a URL or form an attacker gets
-  the victim to trigger). That's the main thing that limits its blast radius compared
-  to stored XSS, which doesn't require re-luring each victim individually.
+Impact
+The lab showed that an attacker-controlled script could run inside the application and modify the page.
 
-## Remediation
+In a real application, the impact could include:
 
-- **Output encoding, not just input validation.** The core fix: encode user-supplied
-  data based on the context it's being rendered into (HTML entity encoding for HTML
-  body content, JS-string escaping inside `<script>` blocks, attribute encoding
-  inside tag attributes). Input validation alone doesn't prevent XSS — encoding at
-  the point of output does.
-- **Content Security Policy (CSP).** A strict CSP (e.g. disallowing inline
-  `<script>` execution) would have blocked every payload used in this assessment,
-  even if the output-encoding bug were still present. Defense in depth.
-- **`HttpOnly` cookies.** Marking session cookies `HttpOnly` prevents JavaScript —
-  including injected JavaScript — from reading `document.cookie` at all, closing off
-  the session-hijacking path even if reflection still exists somewhere.
-- **Input validation as a secondary layer.** Fields with a known format (a
-  three-digit access code, a 16-digit card number) should be validated server-side
-  against that format and rejected outright if they don't match — this wouldn't fix
-  the underlying encoding flaw, but it does shrink the attack surface for that
-  specific field.
+* Session theft if session cookies are accessible to JavaScript.
+* Credential or payment information theft through fake forms or modified page content.
+* DOM manipulation, such as changing prices, account information, or other displayed data.
+* Phishing, since malicious content would appear inside the legitimate website.
+* Business logic manipulation if the server trusts values that should be recalculated and validated server-side.
 
-## Skills & Tools
+The cart manipulation in this lab was only a client-side demonstration. Changing what the browser displays does not automatically change what the server accepts. A properly designed application should always validate important values server-side.
 
-- **Burp Suite** — traffic interception, request body analysis, Repeater for
-  iterative payload testing
-- **HTTP request/response analysis** — systematic parameter enumeration instead of
-  guessing which field to attack
-- **JavaScript / DOM manipulation** — `document.getElementsByTagName`, DOM traversal,
-  `.innerHTML` manipulation, regex-based content matching
-- **Browser DevTools** — Elements/Console panels used to confirm payload behavior
-  against the live DOM
-- **Vulnerability analysis & reporting** — root-cause explanation (not just
-  proof-of-concept), attacker/defender risk framing
+Remediation
+1. Output encoding
+The main fix is to properly encode user input before putting it into the response.
 
----
+For example, HTML special characters such as `<`, `>` and `"` should be encoded so the browser treats them as data instead of HTML.
 
-*Performed for CCCS-455-784 (Intrusion Testing & Security Assessment), McGill
-University School of Continuing Studies, Summer 2026, as a group assignment. This
-write-up covers the technical execution I led.*
+2. Content Security Policy
+A strong Content Security Policy (CSP) can provide another layer of protection by restricting where JavaScript can run and blocking things like inline scripts.
+
+3. HttpOnly cookies
+Session cookies should be marked as HttpOnly so JavaScript cannot access them through `document.cookie`.
+
+This would reduce the impact of XSS if another XSS vulnerability was found.
+
+4. Server-side input validation
+Fields that have a specific format should also be validated on the server.
+
+For example, the access code should only accept the expected number and format of characters. This doesn't replace output encoding, but it adds another layer of protection.
+
+Skills & Tools
+
+* Burp Suite — intercepted requests and tested parameters
+* Kali Linux — used as the attacker environment
+* OWASP WebGoat — intentionally vulnerable application used for the lab
+* HTTP analysis — examined request parameters and server responses
+* JavaScript / DOM manipulation — used to demonstrate the impact of the XSS
+* Browser DevTools — used to confirm JavaScript execution and DOM changes
+* XSS analysis — identified the vulnerable parameter, confirmed execution, and explained the remediation
+
+What I Took From This Project
+The main thing I took from this lab was understanding the difference between simply finding XSS and actually showing its impact.
+
+Using Burp Suite, I was able to test each parameter instead of just guessing which one was vulnerable. Once I found that `field1` was reflecting input without encoding, I could confirm JavaScript execution and then use the vulnerability to actually manipulate the page.
+
+It also showed why output encoding is so important. The application wasn't necessarily doing anything complicated with the input — it was simply putting it back into the page without making sure the browser treated it as data.
+
+Performed for CCCS-455-784 (Intrusion Testing & Security Assessment), McGill University School of Continuing Studies, Summer 2026, as a group assignment. Completed in an isolated WebGoat lab environment.
